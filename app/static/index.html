@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareBox · 文本/文件分享</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#e4e6ea; --txt:#1c1e21; --sub:#6b7280; --main:#2563eb; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; display:flex; justify-content:center; padding:32px 16px; }
+  .wrap { width:100%; max-width:640px; }
+  h1 { font-size:26px; margin-bottom:4px; }
+  .sub { color:var(--sub); font-size:14px; margin-bottom:24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .tabs { display:flex; gap:8px; margin-bottom:18px; }
+  .tab { flex:1; padding:10px; text-align:center; border-radius:10px; cursor:pointer; background:#eef0f3; font-size:15px; user-select:none; transition:.15s; }
+  .tab.active { background:var(--main); color:#fff; }
+  textarea { width:100%; height:180px; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:14px; resize:vertical; font-family:inherit; }
+  textarea:focus { outline:none; border-color:var(--main); }
+  .row { display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap; }
+  select { padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:#fff; }
+  input[type=password] { padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px; width:140px; }
+  .btn { background:var(--main); color:#fff; border:none; border-radius:10px; padding:11px 22px; font-size:15px; cursor:pointer; }
+  .btn:active { opacity:.85; }
+  .btn.gray { background:#eef0f3; color:var(--txt); }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:36px 16px; text-align:center; color:var(--sub); cursor:pointer; transition:.15s; }
+  .drop.hover { border-color:var(--main); background:#f0f5ff; color:var(--main); }
+  .fname { margin-top:10px; font-size:14px; word-break:break-all; }
+  #result { display:none; margin-top:16px; }
+  .linkbox { display:flex; gap:8px; margin-top:8px; }
+  .linkbox input { flex:1; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:14px; color:var(--main); }
+  .msg { color:#dc2626; font-size:14px; margin-top:10px; min-height:20px; }
+  .ok { color:#16a34a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📦 ShareBox</h1>
+  <div class="sub">局域网/自托管 · 文本与文件临时分享 · 手机电脑都能用</div>
+
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" id="tab-text" onclick="switchTab('text')">📝 分享文本</div>
+      <div class="tab" id="tab-file" onclick="switchTab('file')">📁 分享文件</div>
+    </div>
+
+    <div id="pane-text">
+      <textarea id="content" placeholder="在这里粘贴文本…"></textarea>
+    </div>
+
+    <div id="pane-file" style="display:none">
+      <div class="drop" id="drop" onclick="document.getElementById('file').click()">
+        点击选择文件，或拖拽到此处
+        <div class="fname" id="fname"></div>
+      </div>
+      <input type="file" id="file" style="display:none" onchange="showName(this.files)">
+    </div>
+
+    <div class="row">
+      <select id="expiry">
+        <option value="3600">1 小时</option>
+        <option value="86400">1 天</option>
+        <option value="604800" selected>7 天</option>
+        <option value="2592000">30 天</option>
+        <option value="0">永久</option>
+      </select>
+      <input type="password" id="code" placeholder="访问口令(可选)">
+      <button class="btn" style="margin-left:auto" onclick="doShare()">生成分享</button>
+    </div>
+    <div class="msg" id="msg"></div>
+
+    <div id="result">
+      <div style="font-size:14px;color:var(--sub)">分享链接已生成（打开即可复制/下载）：</div>
+      <div class="linkbox">
+        <input id="link" readonly>
+        <button class="btn gray" onclick="copyLink()">复制</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let mode = 'text', pickedFile = null;
+function switchTab(m){
+  mode = m;
+  document.getElementById('tab-text').classList.toggle('active', m==='text');
+  document.getElementById('tab-file').classList.toggle('active', m==='file');
+  document.getElementById('pane-text').style.display = m==='text'?'block':'none';
+  document.getElementById('pane-file').style.display = m==='file'?'block':'none';
+  document.getElementById('result').style.display = 'none';
+  document.getElementById('msg').textContent = '';
+}
+function showName(files){
+  pickedFile = files[0] || null;
+  document.getElementById('fname').textContent = pickedFile ? pickedFile.name : '';
+}
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', e=>{e.preventDefault(); drop.classList.add('hover');});
+drop.addEventListener('dragleave', ()=>drop.classList.remove('hover'));
+drop.addEventListener('drop', e=>{
+  e.preventDefault(); drop.classList.remove('hover');
+  document.getElementById('file').files = e.dataTransfer.files;
+  showName(e.dataTransfer.files);
+});
+async function doShare(){
+  const msg = document.getElementById('msg');
+  msg.textContent = ''; msg.className='msg';
+  const fd = new FormData();
+  fd.append('expiry', document.getElementById('expiry').value);
+  fd.append('code', document.getElementById('code').value);
+  try {
+    let res;
+    if (mode === 'text') {
+      const c = document.getElementById('content').value;
+      if (!c.trim()) { msg.textContent = '请先输入文本内容'; return; }
+      fd.append('content', c);
+      res = await fetch('/api/text', {method:'POST', body:fd});
+    } else {
+      if (!pickedFile) { msg.textContent = '请先选择文件'; return; }
+      fd.append('file', pickedFile);
+      res = await fetch('/api/file', {method:'POST', body:fd});
+    }
+    const data = await res.json();
+    if (!res.ok) { msg.textContent = data.detail || '分享失败'; return; }
+    const link = location.origin + data.url;
+    document.getElementById('link').value = link;
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('content').value = '';
+  } catch(e) {
+    msg.textContent = '网络错误：' + e.message;
+  }
+}
+function copyLink(){
+  const input = document.getElementById('link');
+  input.select();
+  (navigator.clipboard ? navigator.clipboard.writeText(input.value) : Promise.reject())
+    .catch(()=>document.execCommand('copy'));
+}
+</script>
+</body>
+</html>
