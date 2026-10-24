@@ -386,13 +386,35 @@ ta.addEventListener('input', ()=>autoGrow(ta));
 function autoGrow(el){ el.style.height='38px'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
 
 /* ---------- 复制 / 删除 ---------- */
+/* 复制文本: 优先 Clipboard API (HTTPS/localhost), 不可用时降级 execCommand (HTTP 局域网可用) */
+async function copyText(text){
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch(e) {}
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');          // 防止 iOS 弹起键盘
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);     // iOS Safari 需要显式设置选区
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
+  return ok;
+}
 async function copyMsg(id, btn){
   const r = await fetch('/api/raw/' + id);
   if (!r.ok) { toast('内容已不存在'); return; }
   const text = await r.text();
-  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
-    .then(()=>{ if (btn) { btn.textContent='已复制'; setTimeout(()=>btn.textContent='复制',1500); } else toast('已复制'); })
-    .catch(()=>toast('复制失败, 请长按选择文本'));
+  const ok = await copyText(text);
+  if (ok) {
+    if (btn) { btn.textContent='✅ 已复制'; setTimeout(()=>btn.textContent='复制',1500); }
+    else toast('已复制');
+  } else {
+    toast('复制失败, 请长按气泡手动选择复制');
+  }
 }
 
 /* ---------- 长按菜单 (微信风格) ---------- */
