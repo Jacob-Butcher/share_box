@@ -1,7 +1,9 @@
-"""ShareBox - 轻量文本/文件分享服务，适合跑在 NAS Docker 中"""
+"""ShareBox - 实时共享文本/文件看板, 适合跑在 NAS Docker 中
+
+所有设备打开同一个网页即可实时看到所有人分享的文本和文件。
+"""
 import os
 import secrets
-import shutil
 import sqlite3
 import threading
 import time
@@ -9,8 +11,7 @@ from contextlib import closing
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "./data"))
 UPLOAD_DIR = DATA_DIR / "files"
@@ -32,11 +33,16 @@ def db() -> sqlite3.Connection:
                id      TEXT PRIMARY KEY,
                type    TEXT NOT NULL,          -- 'text' | 'file'
                name    TEXT,                   -- 文件原始文件名
+               frm     TEXT NOT NULL DEFAULT '',  -- 分享者昵称
                size    INTEGER NOT NULL DEFAULT 0,
                expire  INTEGER NOT NULL DEFAULT 0,  -- 有效秒数, 0=永久
                created INTEGER NOT NULL
            )"""
     )
+    # 兼容旧库: 补 frm 列
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(shares)")}
+    if "frm" not in cols:
+        conn.execute("ALTER TABLE shares ADD COLUMN frm TEXT NOT NULL DEFAULT ''")
     return conn
 
 
@@ -50,15 +56,12 @@ def cleanup():
     now = int(time.time())
     with closing(db()) as conn:
         rows = conn.execute(
-            "SELECT id, type FROM shares WHERE expire > 0 AND created + expire < ?",
-            (now,),
+            "SELECT id FROM shares WHERE expire > 0 AND created + expire < ?", (now,)
         ).fetchall()
         if not rows:
             return
-        for sid, _ in rows:
-            p = UPLOAD_DIR / sid
-            if p.is_file():
-                p.unlink(missing_ok=True)
+        for (sid,) in rows:
+            (UPLOAD_DIR / sid).unlink(missing_ok=True)
         conn.execute(
             "DELETE FROM shares WHERE expire > 0 AND created + expire < ?", (now,)
         )
@@ -86,18 +89,60 @@ def index():
     return (static_dir / "index.html").read_text(encoding="utf-8")
 
 
-@app.get("/t/{sid}", response_class=HTMLResponse)
-def text_page(sid: str):
-    return (static_dir / "text.html").read_text(encoding="utf-8")
+def board_data() -> dict:
+    """看板数据: 最近的文本和文件, 所有设备一致"""
+    texts, files = [], []
+    with closing(db()) as conn:
+        rows = conn.execute(
+            "SELECT id, type, name, frm, size, expire, created FROM shares"
+            " ORDER BY created DESC LIMIT 200"
+        ).fetchall()
+    now = int(time.time())
+    for sid, typ, name, frm, size, expire, created in rows:
+        left = expire - (now - created) if expire else 0
+        if typ == "text":
+            try:
+                content = (UPLOAD_DIR / sid).read_text(encoding="utf-8")
+            except Exception:
+                continue
+            texts.append(
+                {
+                    "id": sid,
+                    "type": "text",
+                    "full": content,
+                    "frm": frm,
+                    "size": size,
+                    "created": created,
+                    "left": left,
+                }
+            )
+        else:
+            files.append(
+                {
+                    "id": sid,
+                    "type": "file",
+                    "name": name or "未命名文件",
+                    "frm": frm,
+                    "size": size,
+                    "created": created,
+                    "left": left,
+                }
+            )
+    return {"texts": texts, "files": files}
 
 
-@app.get("/f/{sid}", response_class=HTMLResponse)
-def file_page(sid: str):
-    return (static_dir / "file.html").read_text(encoding="utf-8")
+@app.get("/api/board")
+def board():
+    return board_data()
 
 
 @app.post("/api/text")
-def share_text(content: str = Form(...), expiry: int = Form(0), code: str = Form("")):
+def share_text(
+    content: str = Form(...),
+    expiry: int = Form(0),
+    code: str = Form(""),
+    frm: str = Form(""),
+):
     check_code(code)
     content = content or ""
     if not content.strip():
@@ -108,34 +153,13 @@ def share_text(content: str = Form(...), expiry: int = Form(0), code: str = Form
     (UPLOAD_DIR / sid).write_text(content, encoding="utf-8")
     with closing(db()) as conn:
         conn.execute(
-            "INSERT INTO shares (id, type, size, expire, created) VALUES (?,?,?,?,?)",
-            (sid, "text", len(content.encode("utf-8")), expiry, int(time.time())),
+            "INSERT INTO shares (id, type, name, frm, size, expire, created)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (sid, "text", content[:60], frm[:30],
+             len(content.encode("utf-8")), expiry, int(time.time())),
         )
         conn.commit()
-    return {"id": sid, "url": f"/t/{sid}"}
-
-
-@app.get("/api/text/{sid}")
-def get_text(sid: str):
-    with closing(db()) as conn:
-        row = conn.execute(
-            "SELECT type FROM shares WHERE id = ?", (sid,)
-        ).fetchone()
-    if not row or row[0] != "text":
-        raise HTTPException(status_code=404, detail="分享不存在或已过期")
-    p = UPLOAD_DIR / sid
-    if not p.is_file():
-        raise HTTPException(status_code=404, detail="分享不存在或已过期")
-    return JSONResponse({"id": sid, "content": p.read_text(encoding="utf-8")})
-
-
-@app.get("/api/raw/{sid}", response_class=PlainTextResponse)
-def get_raw_text(sid: str):
-    # 文本内容保存在 files/<id> 中, 与文件共用存储
-    p = UPLOAD_DIR / sid
-    if not p.is_file():
-        raise HTTPException(status_code=404, detail="分享不存在或已过期")
-    return PlainTextResponse(p.read_text(encoding="utf-8"))
+    return board_data()
 
 
 @app.post("/api/file")
@@ -143,6 +167,7 @@ async def share_file(
     file: UploadFile = File(...),
     expiry: int = Form(0),
     code: str = Form(""),
+    frm: str = Form(""),
 ):
     check_code(code)
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
@@ -155,45 +180,46 @@ async def share_file(
                 size += len(chunk)
                 if size > max_bytes:
                     raise HTTPException(
-                        status_code=413,
-                        detail=f"文件超过 {MAX_UPLOAD_MB}MB 上限",
+                        status_code=413, detail=f"文件超过 {MAX_UPLOAD_MB}MB 上限"
                     )
                 out.write(chunk)
-    except HTTPException:
-        dest.unlink(missing_ok=True)
-        raise
     except Exception:
         dest.unlink(missing_ok=True)
         raise
     filename = (file.filename or "未命名文件").strip() or "未命名文件"
     with closing(db()) as conn:
         conn.execute(
-            "INSERT INTO shares (id, type, name, size, expire, created) VALUES (?,?,?,?,?,?)",
-            (sid, "file", filename, size, expiry, int(time.time())),
+            "INSERT INTO shares (id, type, name, frm, size, expire, created)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (sid, "file", filename, frm[:30], size, expiry, int(time.time())),
         )
         conn.commit()
-    return {"id": sid, "url": f"/f/{sid}"}
+    return board_data()
 
 
-@app.get("/api/info/{sid}")
-def info(sid: str):
+@app.post("/api/delete")
+def delete_item(id: str = Form(...), code: str = Form("")):
+    check_code(code)
     with closing(db()) as conn:
-        row = conn.execute(
-            "SELECT id, type, name, size, expire, created FROM shares WHERE id = ?",
-            (sid,),
-        ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="分享不存在或已过期")
-    sid_, typ, name, size, expire, created = row
-    return {
-        "id": sid_,
-        "type": typ,
-        "name": name,
-        "size": size,
-        "expire": expire,
-        "created": created,
-        "left": expire - (int(time.time()) - created) if expire else 0,
-    }
+        row = conn.execute("SELECT id FROM shares WHERE id = ?", (id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="内容不存在或已删除")
+        conn.execute("DELETE FROM shares WHERE id = ?", (id,))
+        conn.commit()
+    (UPLOAD_DIR / id).unlink(missing_ok=True)
+    return board_data()
+
+
+@app.get("/api/raw/{sid}", response_class=PlainTextResponse)
+def get_raw_text(sid: str):
+    with closing(db()) as conn:
+        row = conn.execute("SELECT type FROM shares WHERE id = ?", (sid,)).fetchone()
+    if not row or row[0] != "text":
+        raise HTTPException(status_code=404, detail="文本不存在或已过期")
+    p = UPLOAD_DIR / sid
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="文本不存在或已过期")
+    return PlainTextResponse(p.read_text(encoding="utf-8"))
 
 
 @app.get("/api/download/{sid}")
@@ -208,6 +234,3 @@ def download(sid: str):
     if not p.is_file():
         raise HTTPException(status_code=404, detail="文件不存在或已过期")
     return FileResponse(p, filename=row[1])
-
-
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
