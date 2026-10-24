@@ -8,5 +8,4 @@ services:
     volumes:
       - ./data:/data         # 分享数据保存在这里, 升级容器不丢失
     environment:
-      # ACCESS_CODE: "123456" # 如需口令保护, 取消注释并设置口令
       MAX_UPLOAD_MB: "1024"  # 单文件大小上限 (MB)

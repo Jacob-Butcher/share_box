@@ -114,14 +114,6 @@
     font-size:14px; padding:0 18px; height:38px; cursor:pointer; flex-shrink:0;
   }
   .composer .send:disabled { background:#b8e6cd; }
-  .composer select {
-    height:38px; border:1px solid var(--wx-line); border-radius:8px;
-    background:#fff; font-size:13px; padding:0 6px; flex-shrink:0;
-  }
-  .composer input[type=password] {
-    height:38px; border:1px solid var(--wx-line); border-radius:8px;
-    background:#fff; font-size:13px; padding:0 10px; width:110px; flex-shrink:0;
-  }
   .hint { font-size:11px; color:var(--sub); text-align:center; padding:0 12px 6px; background:#f7f7f7; }
 
   .toast {
@@ -149,14 +141,6 @@
   <button class="attach" id="attachBtn" title="发送文件">📎</button>
   <input type="file" id="file" style="display:none">
   <textarea id="content" rows="1" placeholder="说点什么, 或粘贴文本…"></textarea>
-  <select id="expiry" title="有效期">
-    <option value="3600">1小时</option>
-    <option value="86400">1天</option>
-    <option value="604800" selected>7天</option>
-    <option value="2592000">30天</option>
-    <option value="0">永久</option>
-  </select>
-  <input type="password" id="code" placeholder="口令" title="访问口令(可选)">
   <button class="send" id="sendBtn" onclick="sendText()">发送</button>
 </div>
 <div class="hint">所有设备打开同一网址即可实时看到彼此发送的文本和文件</div>
@@ -171,13 +155,12 @@ let lastKey = '';
 $('nick').value = localStorage.getItem('sb_nick') || '';
 $('nick').addEventListener('input', () => {
   localStorage.setItem('sb_nick', $('nick').value.trim());
-  render(true);   // 昵称变化后左右归属立即刷新
+  render();   // 昵称变化后左右归属立即刷新
 });
 const myNick = () => $('nick').value.trim();
 const esc = s => (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function fmtSize(n){ return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB'; }
 function fmtTime(t){ const d=new Date(t*1000); return (d.getMonth()+1)+'月'+(d.getDate())+'日 '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
-function fmtLeft(s){ if(!s) return ''; if(s<3600) return ' · '+Math.ceil(s/60)+'分钟后过期'; if(s<86400) return ' · '+Math.ceil(s/3600)+'小时后过期'; return ' · '+Math.ceil(s/86400)+'天后过期'; }
 function toast(t){ const el=$('toast'); el.textContent=t; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),1600); }
 const isSelf = m => myNick() && m.frm === myNick();
 
@@ -226,7 +209,7 @@ function render(){
           <div class="msg-wrap">
             <div class="nickname">${esc(m.frm || '匿名')}</div>
             ${bubble}
-            <div class="meta">${fmtTime(m.ts)}${fmtLeft(m.left)}</div>
+            <div class="meta">${fmtTime(m.ts)}</div>
             <div class="ops">
               ${m.type==='text' ? `<button onclick="copyMsg('${m.id}', this)">复制</button>` : ''}
               <button onclick="delMsg('${m.id}')">删除</button>
@@ -276,8 +259,6 @@ async function sendText(){
   if (!c.trim()) return;
   const fd = new FormData();
   fd.append('content', c);
-  fd.append('expiry', $('expiry').value);
-  fd.append('code', $('code').value);
   fd.append('frm', myNick());
   const d = await postForm('/api/text', fd);
   if (d) {
@@ -295,8 +276,6 @@ async function uploadFile(){
   if (!pickedFile) return;
   const fd = new FormData();
   fd.append('file', pickedFile);
-  fd.append('expiry', $('expiry').value);
-  fd.append('code', $('code').value);
   fd.append('frm', myNick());
   const d = await postForm('/api/file', fd);
   $('file').value = ''; pickedFile = null;
@@ -323,7 +302,6 @@ async function delMsg(id){
   if (!confirm('确定删除这条消息?')) return;
   const fd = new FormData();
   fd.append('id', id);
-  fd.append('code', $('code').value);
   await postForm('/api/delete', fd);
   poll();
 }
