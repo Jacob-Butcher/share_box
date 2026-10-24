@@ -2,25 +2,30 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>预览 · ShareBox</title>
 <style>
   :root { --bg:#f5f6f8; --card:#fff; --line:#e4e6ea; --txt:#1c1e21; --sub:#6b7280; --main:#2563eb; }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; display:flex; flex-direction:column; }
-  .bar { flex-shrink:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  .bar .back { color:var(--main); text-decoration:none; font-size:14px; }
-  .bar .name { font-size:15px; font-weight:600; word-break:break-all; }
-  .bar .meta { color:var(--sub); font-size:12px; }
-  .bar .dl { margin-left:auto; background:var(--main); color:#fff; text-decoration:none; font-size:13px; border-radius:8px; padding:7px 16px; }
-  .stage { flex:1; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; }
-  .stage img { max-width:100%; max-height:calc(100vh - 90px); border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,.12); background:#fff; }
-  .stage iframe { width:100%; height:calc(100vh - 90px); border:none; border-radius:8px; background:#fff; }
-  .stage pre { width:100%; max-width:900px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; font-size:13px; line-height:1.6; overflow:auto; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html, body { overflow-x:hidden; max-width:100%; -webkit-text-size-adjust:100%; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; }
+  .bar { flex-shrink:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; padding-top:calc(10px + env(safe-area-inset-top)); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .bar .back { color:var(--main); text-decoration:none; font-size:14px; flex-shrink:0; }
+  .bar .name { font-size:15px; font-weight:600; word-break:break-all; min-width:0; flex:1; }
+  .bar .meta { color:var(--sub); font-size:12px; flex-shrink:0; }
+  .bar .dl { margin-left:auto; background:var(--main); color:#fff; text-decoration:none; font-size:13px; border-radius:8px; padding:7px 16px; flex-shrink:0; }
+  .stage { flex:1; overflow:auto; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .stage img { max-width:100%; max-height:calc(100dvh - 90px); border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,.12); background:#fff; }
+  .stage iframe { width:100%; height:calc(100dvh - 90px); border:none; border-radius:8px; background:#fff; }
+  .stage pre { width:100%; max-width:900px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; font-size:13px; line-height:1.6; overflow:auto; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; }
   .empty { text-align:center; color:var(--sub); }
   .empty .icon { font-size:48px; margin-bottom:12px; }
   .empty .btn { display:inline-block; margin-top:14px; background:var(--main); color:#fff; text-decoration:none; border-radius:8px; padding:9px 22px; font-size:14px; }
   .err { color:#dc2626; font-size:15px; text-align:center; }
+  @media (max-width: 480px) {
+    .bar { padding:8px 12px; padding-top:calc(8px + env(safe-area-inset-top)); gap:8px; }
+    .stage { padding:10px; }
+  }
 </style>
 </head>
 <body>
