@@ -1,6 +1,12 @@
 """ShareBox - 实时共享文本/文件看板, 适合跑在 NAS Docker 中
 
 所有设备打开同一个网页即可实时看到所有人分享的文本和文件。
+
+同步设计 (避免全量轮询):
+- 写操作 (分享/删除) 都会往 events 表追加一条事件 (add/del)
+- 客户端首次加载只取最近 N 条 (/api/board?limit=50), 并记下事件序号
+- 之后每 2 秒只拉取该序号之后的事件 (/api/events?since=seq),
+  没有新内容时几乎零开销; 历史消息通过「加载更多」按 created 游标分页
 """
 import os
 import mimetypes
@@ -38,6 +44,13 @@ def db() -> sqlite3.Connection:
                created INTEGER NOT NULL
            )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS events (
+               seq INTEGER PRIMARY KEY AUTOINCREMENT,
+               op  TEXT NOT NULL,              -- 'add' | 'del'
+               id  TEXT NOT NULL
+           )"""
+    )
     # 兼容旧库: 补 frm 列
     cols = {r[1] for r in conn.execute("PRAGMA table_info(shares)")}
     if "frm" not in cols:
@@ -47,6 +60,14 @@ def db() -> sqlite3.Connection:
 
 def new_id() -> str:
     return secrets.token_urlsafe(6)
+
+
+def log_event(conn: sqlite3.Connection, op: str, sid: str):
+    conn.execute("INSERT INTO events (op, id) VALUES (?,?)", (op, sid))
+
+
+def max_seq(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif"}
@@ -83,49 +104,85 @@ def preview_page(sid: str):
     return (static_dir / "preview.html").read_text(encoding="utf-8")
 
 
-def board_data() -> dict:
-    """看板数据: 最近的文本和文件, 所有设备一致"""
-    texts, files = [], []
-    with closing(db()) as conn:
-        rows = conn.execute(
-            "SELECT id, type, name, frm, size, created FROM shares"
-            " ORDER BY created DESC LIMIT 200"
-        ).fetchall()
-    for sid, typ, name, frm, size, created in rows:
-        if typ == "text":
-            try:
-                content = (UPLOAD_DIR / sid).read_text(encoding="utf-8")
-            except Exception:
-                continue
-            texts.append(
-                {
-                    "id": sid,
-                    "type": "text",
-                    "full": content,
-                    "frm": frm,
-                    "size": size,
-                    "created": created,
-                }
-            )
-        else:
-            files.append(
-                {
-                    "id": sid,
-                    "type": "file",
-                    "name": name or "未命名文件",
-                    "frm": frm,
-                    "size": size,
-                    "created": created,
-                    "kind": file_kind(name),
-                    "mime": file_mime(name),
-                }
-            )
-    return {"texts": texts, "files": files}
+def build_item(conn: sqlite3.Connection, row, seq: int = 0) -> dict | None:
+    """把一行 shares 记录组装成前端消息对象 (row 前 6 列为 shares 字段)"""
+    sid, typ, name, frm, size, created = row[:6]
+    if typ == "text":
+        try:
+            content = (UPLOAD_DIR / sid).read_text(encoding="utf-8")
+        except Exception:
+            return None
+        return {
+            "id": sid,
+            "type": "text",
+            "full": content,
+            "frm": frm,
+            "size": size,
+            "created": created,
+            "seq": seq,
+        }
+    name = name or "未命名文件"
+    return {
+        "id": sid,
+        "type": "file",
+        "name": name,
+        "frm": frm,
+        "size": size,
+        "created": created,
+        "kind": file_kind(name),
+        "mime": file_mime(name),
+        "seq": seq,
+    }
+
+
+COLS = "s.id, s.type, s.name, s.frm, s.size, s.created"
 
 
 @app.get("/api/board")
-def board():
-    return board_data()
+def board(limit: int = 50, beforeSeq: int = 0):
+    """初始/分页加载: 按事件序号倒序取最近 limit 条 (同一秒的消息也不会漏)"""
+    limit = min(max(int(limit), 1), 200)
+    with closing(db()) as conn:
+        seq = max_seq(conn)
+        sql = (
+            f"SELECT {COLS}, e.seq FROM events e JOIN shares s ON s.id = e.id"
+            " WHERE e.op = 'add'"
+        )
+        params: list = []
+        if beforeSeq:
+            sql += " AND e.seq < ?"
+            params.append(int(beforeSeq))
+        sql += " ORDER BY e.seq DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        items = [it for it in (build_item(conn, r, r[6]) for r in rows) if it]
+    return {"items": items, "maxSeq": seq, "hasMore": len(items) >= limit}
+
+
+@app.get("/api/events")
+def events(since: int = 0, limit: int = 200):
+    """增量同步: 只返回 seq 之后的事件; add 事件附带完整消息内容"""
+    limit = min(max(int(limit), 1), 500)
+    with closing(db()) as conn:
+        seq = max_seq(conn)
+        rows = conn.execute(
+            "SELECT seq, op, id FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
+            (since, limit),
+        ).fetchall()
+        out = []
+        for eseq, op, sid in rows:
+            if op == "add":
+                row = conn.execute(
+                    f"SELECT {COLS} FROM shares s WHERE s.id = ?", (sid,)
+                ).fetchone()
+                if not row:
+                    continue  # 添加后又被删除, 客户端无需看到
+                item = build_item(conn, row, eseq)
+                if item:
+                    out.append({"seq": eseq, "op": "add", "item": item})
+            else:
+                out.append({"seq": eseq, "op": "del", "id": sid})
+    return {"events": out, "maxSeq": seq}
 
 
 @app.post("/api/text")
@@ -144,8 +201,9 @@ def share_text(content: str = Form(...), frm: str = Form("")):
             (sid, "text", content[:60], frm[:30],
              len(content.encode("utf-8")), 0, int(time.time())),
         )
+        log_event(conn, "add", sid)
         conn.commit()
-    return board_data()
+    return {"ok": True}
 
 
 @app.post("/api/file")
@@ -173,8 +231,9 @@ async def share_file(file: UploadFile = File(...), frm: str = Form("")):
             " VALUES (?,?,?,?,?,?,?)",
             (sid, "file", filename, frm[:30], size, 0, int(time.time())),
         )
+        log_event(conn, "add", sid)
         conn.commit()
-    return board_data()
+    return {"ok": True}
 
 
 @app.post("/api/delete")
@@ -184,9 +243,10 @@ def delete_item(id: str = Form(...)):
         if not row:
             raise HTTPException(status_code=404, detail="内容不存在或已删除")
         conn.execute("DELETE FROM shares WHERE id = ?", (id,))
+        log_event(conn, "del", id)
         conn.commit()
     (UPLOAD_DIR / id).unlink(missing_ok=True)
-    return board_data()
+    return {"ok": True}
 
 
 @app.get("/api/raw/{sid}", response_class=PlainTextResponse)
@@ -219,20 +279,12 @@ def download(sid: str):
 def file_info(sid: str):
     with closing(db()) as conn:
         row = conn.execute(
-            "SELECT type, name, frm, size, created FROM shares WHERE id = ?", (sid,)
+            f"SELECT {COLS} FROM shares WHERE id = ?", (sid,)
         ).fetchone()
     if not row or row[0] != "file":
         raise HTTPException(status_code=404, detail="文件不存在或已删除")
-    name = row[1] or "未命名文件"
-    return {
-        "id": sid,
-        "name": name,
-        "frm": row[2],
-        "size": row[3],
-        "created": row[4],
-        "kind": file_kind(name),
-        "mime": file_mime(name),
-    }
+    item = build_item(conn, row)
+    return item
 
 
 @app.get("/api/file/{sid}")
