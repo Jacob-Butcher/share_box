@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>预览 · ShareBox</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#e4e6ea; --txt:#1c1e21; --sub:#6b7280; --main:#2563eb; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; display:flex; flex-direction:column; }
+  .bar { flex-shrink:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .bar .back { color:var(--main); text-decoration:none; font-size:14px; }
+  .bar .name { font-size:15px; font-weight:600; word-break:break-all; }
+  .bar .meta { color:var(--sub); font-size:12px; }
+  .bar .dl { margin-left:auto; background:var(--main); color:#fff; text-decoration:none; font-size:13px; border-radius:8px; padding:7px 16px; }
+  .stage { flex:1; overflow:auto; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .stage img { max-width:100%; max-height:calc(100vh - 90px); border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,.12); background:#fff; }
+  .stage iframe { width:100%; height:calc(100vh - 90px); border:none; border-radius:8px; background:#fff; }
+  .stage pre { width:100%; max-width:900px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; font-size:13px; line-height:1.6; overflow:auto; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .empty { text-align:center; color:var(--sub); }
+  .empty .icon { font-size:48px; margin-bottom:12px; }
+  .empty .btn { display:inline-block; margin-top:14px; background:var(--main); color:#fff; text-decoration:none; border-radius:8px; padding:9px 22px; font-size:14px; }
+  .err { color:#dc2626; font-size:15px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="/">‹ 返回</a>
+  <span class="name" id="name">加载中…</span>
+  <span class="meta" id="meta"></span>
+  <a class="dl" id="dl" href="#">下载</a>
+</div>
+<div class="stage" id="stage"><div class="empty">加载中…</div></div>
+
+<script>
+const sid = location.pathname.split('/').pop();
+const esc = s => (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function fmtSize(n){ return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':n<1073741824?(n/1048576).toFixed(1)+' MB':(n/1073741824).toFixed(2)+' GB'; }
+
+fetch('/api/fileinfo/' + sid).then(r=>{
+  if (!r.ok) throw 0;
+  return r.json();
+}).then(d=>{
+  document.title = d.name + ' · ShareBox';
+  $('name').textContent = d.name;
+  $('meta').textContent = fmtSize(d.size) + (d.frm ? ' · ' + d.frm : '');
+  $('dl').href = '/api/download/' + sid;
+  const stage = $('stage');
+  if (d.kind === 'image') {
+    stage.innerHTML = '<img src="/api/file/' + sid + '" alt="' + esc(d.name) + '">';
+  } else if (d.kind === 'pdf') {
+    stage.innerHTML = '<iframe src="/api/file/' + sid + '"></iframe>';
+  } else if (d.kind === 'text') {
+    fetch('/api/file/' + sid).then(r=>r.text()).then(t=>{
+      stage.innerHTML = '<pre>' + esc(t) + '</pre>';
+    });
+  } else {
+    stage.innerHTML = '<div class="empty"><div class="icon">📄</div>' +
+      '<div>' + esc(d.name) + ' 暂不支持在线预览</div>' +
+      '<a class="btn" href="/api/download/' + sid + '">下载到本地</a></div>';
+  }
+}).catch(()=>{
+  $('name').textContent = '文件不存在或已删除';
+  $('stage').innerHTML = '<div class="err">😕 文件不存在或已删除</div>';
+});
+function $(id){ return document.getElementById(id); }
+</script>
+</body>
+</html>

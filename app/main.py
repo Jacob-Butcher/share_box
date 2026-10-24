@@ -3,6 +3,7 @@
 所有设备打开同一个网页即可实时看到所有人分享的文本和文件。
 """
 import os
+import mimetypes
 import secrets
 import sqlite3
 import time
@@ -48,9 +49,38 @@ def new_id() -> str:
     return secrets.token_urlsafe(6)
 
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif"}
+TEXT_EXTS = {
+    ".txt", ".md", ".markdown", ".log", ".json", ".xml", ".yaml", ".yml",
+    ".csv", ".tsv", ".html", ".htm", ".css", ".js", ".ts", ".py", ".sh",
+    ".java", ".c", ".cpp", ".h", ".go", ".rs", ".sql", ".ini", ".toml", ".conf",
+}
+
+
+def file_kind(name: str) -> str:
+    """image: 图片内联显示; pdf: 浏览器原生预览; text: 文本预览; other: 仅下载"""
+    ext = Path(name or "").suffix.lower()
+    if ext in IMAGE_EXTS:
+        return "image"
+    if ext == ".pdf":
+        return "pdf"
+    if ext in TEXT_EXTS:
+        return "text"
+    return "other"
+
+
+def file_mime(name: str) -> str:
+    return mimetypes.guess_type(name or "")[0] or "application/octet-stream"
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (static_dir / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/p/{sid}", response_class=HTMLResponse)
+def preview_page(sid: str):
+    return (static_dir / "preview.html").read_text(encoding="utf-8")
 
 
 def board_data() -> dict:
@@ -86,6 +116,8 @@ def board_data() -> dict:
                     "frm": frm,
                     "size": size,
                     "created": created,
+                    "kind": file_kind(name),
+                    "mime": file_mime(name),
                 }
             )
     return {"texts": texts, "files": files}
@@ -181,3 +213,42 @@ def download(sid: str):
     if not p.is_file():
         raise HTTPException(status_code=404, detail="文件不存在或已删除")
     return FileResponse(p, filename=row[1])
+
+
+@app.get("/api/fileinfo/{sid}")
+def file_info(sid: str):
+    with closing(db()) as conn:
+        row = conn.execute(
+            "SELECT type, name, frm, size, created FROM shares WHERE id = ?", (sid,)
+        ).fetchone()
+    if not row or row[0] != "file":
+        raise HTTPException(status_code=404, detail="文件不存在或已删除")
+    name = row[1] or "未命名文件"
+    return {
+        "id": sid,
+        "name": name,
+        "frm": row[2],
+        "size": row[3],
+        "created": row[4],
+        "kind": file_kind(name),
+        "mime": file_mime(name),
+    }
+
+
+@app.get("/api/file/{sid}")
+def file_inline(sid: str):
+    """内联提供文件内容, 供图片直接显示 / PDF iframe / 文本预览使用"""
+    with closing(db()) as conn:
+        row = conn.execute(
+            "SELECT type, name FROM shares WHERE id = ?", (sid,)
+        ).fetchone()
+    if not row or row[0] != "file":
+        raise HTTPException(status_code=404, detail="文件不存在或已删除")
+    p = UPLOAD_DIR / sid
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在或已删除")
+    return FileResponse(
+        p,
+        media_type=file_mime(row[1]),
+        content_disposition_type="inline",
+    )

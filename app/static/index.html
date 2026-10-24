@@ -104,7 +104,17 @@
     flex-shrink:0; font-size:13px; color:var(--blue); text-decoration:none;
     border:1px solid var(--blue); border-radius:6px; padding:4px 10px;
   }
+  /* 图片气泡 */
+  .img-bubble { padding:4px; cursor:zoom-in; }
+  .img-bubble img {
+    display:block; max-width:220px; max-height:280px;
+    border-radius:4px; object-fit:cover;
+  }
   .row.self .file-bubble .dl { color:#0b6d33; border-color:#0b6d33; }
+  .file-bubble .pv {
+    flex-shrink:0; font-size:13px; color:var(--sub); text-decoration:none;
+    border:1px solid #c8c8c8; border-radius:6px; padding:4px 10px;
+  }
 
   /* 消息操作按钮: 桌面悬停显示, 触屏常驻显示 */
   .ops { display:flex; gap:6px; margin:6px 4px 0; opacity:0; transition:opacity .15s; }
@@ -224,13 +234,21 @@ function render(){
       let bubble;
       if (m.type === 'text') {
         bubble = `<div class="bubble">${esc(m.full)}</div>`;
+      } else if (m.kind === 'image') {
+        bubble = `<div class="bubble img-bubble" title="点击查看大图">
+            <img src="/api/file/${m.id}" alt="${esc(m.name)}" loading="lazy"
+                 onclick="window.open('/p/${m.id}')">
+          </div>`;
       } else {
+        const pv = (m.kind === 'pdf' || m.kind === 'text')
+          ? `<a class="pv" href="/p/${m.id}" target="_blank">预览</a>` : '';
         bubble = `<div class="bubble file-bubble">
             <span class="ficon">📄</span>
             <div class="finfo">
               <div class="fname">${esc(m.name)}</div>
               <div class="fsize">${fmtSize(m.size)}</div>
             </div>
+            ${pv}
             <a class="dl" href="/api/download/${m.id}" download>下载</a>
           </div>`;
       }
