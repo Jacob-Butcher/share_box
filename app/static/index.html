@@ -106,6 +106,17 @@
   }
   .row.self .file-bubble .dl { color:#0b6d33; border-color:#0b6d33; }
 
+  /* 消息操作按钮: 桌面悬停显示, 触屏常驻显示 */
+  .ops { display:flex; gap:6px; margin:6px 4px 0; opacity:0; transition:opacity .15s; }
+  .row:hover .ops { opacity:1; }
+  @media (hover: none) { .ops { opacity:1; } }
+  .ops button, .ops a {
+    font-size:12px; color:var(--sub); background:#e4e4e4; border:none;
+    border-radius:5px; padding:3px 10px; cursor:pointer; text-decoration:none;
+  }
+  .ops button:active { background:#d4d4d4; }
+  .row.self .ops { flex-direction:row-reverse; }
+
   /* ===== 底部输入栏 (微信风格) ===== */
   .composer {
     flex-shrink:0; background:#f7f7f7; border-top:1px solid var(--wx-line);
@@ -162,7 +173,7 @@
   <textarea id="content" rows="1" placeholder="说点什么, 或粘贴文本…"></textarea>
   <button class="send" id="sendBtn" onclick="sendText()">发送</button>
 </div>
-<div class="hint">所有设备打开同一网址即可实时看到彼此发送的文本和文件</div>
+<div class="hint">所有设备打开同一网址即可实时看到彼此发送的文本和文件 · 删除: 悬停消息点「删除」/ 右键 / 双击 / 长按</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -229,6 +240,12 @@ function render(){
             <div class="nickname">${esc(m.frm || '匿名')}</div>
             ${bubble}
             <div class="meta">${fmtTime(m.ts)}</div>
+            <div class="ops">
+              ${m.type==='text'
+                ? `<button onclick="copyMsg('${m.id}', this)">复制</button>`
+                : `<a href="/api/download/${m.id}" download>下载</a>`}
+              <button onclick="delMsg('${m.id}')">删除</button>
+            </div>
           </div>
         </div>`;
     });
@@ -356,6 +373,11 @@ chatEl.addEventListener('contextmenu', e=>{   // 电脑端右键同样唤出菜�
   const row = e.target.closest('.row');
   if (!row) return;
   e.preventDefault();
+  showCtx(row.dataset.id, row.dataset.type, e.clientX, e.clientY);
+});
+chatEl.addEventListener('dblclick', e=>{     // 双击消息也能唤出菜单
+  const row = e.target.closest('.row');
+  if (!row) return;
   showCtx(row.dataset.id, row.dataset.type, e.clientX, e.clientY);
 });
 chatEl.addEventListener('scroll', ()=>{ clearTimeout(pressTimer); hideCtx(); });
