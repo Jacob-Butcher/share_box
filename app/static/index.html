@@ -186,7 +186,7 @@
   <button class="attach" id="attachBtn" title="发送文件">📎</button>
   <input type="file" id="file" style="display:none">
   <textarea id="content" rows="1" placeholder="说点什么, 或粘贴文本…"></textarea>
-  <button class="send" id="sendBtn" onclick="sendText()">发送</button>
+  <button class="send" id="sendBtn" onclick="sendText(); this.blur()">发送</button>
 </div>
 <div class="hint">所有设备打开同一网址即可实时看到彼此发送的文本和文件 · 删除: 悬停消息点「删除」/ 右键 / 双击 / 长按</div>
 <div class="toast" id="toast"></div>
@@ -196,6 +196,7 @@ const $ = id => document.getElementById(id);
 let pickedFile = null;
 /* 本地消息状态: 只保留已加载的消息, 轮询只合并增量事件 */
 const state = { items: new Map(), lastSeq: 0, hasMore: false, loadingMore: false };
+let sending = false, lastSendAt = 0;   // 发送防抖状态
 
 /* ---------- 工具 ---------- */
 $('nick').value = localStorage.getItem('sb_nick') || '';
@@ -340,17 +341,22 @@ async function postForm(url, fd){
   } catch(e){ toast('网络错误'); return null; }
 }
 async function sendText(){
+  /* 防抖: 按钮连点 / 回车与按钮焦点重复触发时只发一次 */
+  if (sending || Date.now() - lastSendAt < 600) return;
   const c = $('content').value;
   if (!c.trim()) return;
-  const fd = new FormData();
-  fd.append('content', c);
-  fd.append('frm', myNick());
-  const d = await postForm('/api/text', fd);
-  if (d && d.ok) {
-    $('content').value = ''; autoGrow($('content'));
-    poll();
-    toast('已发送');
-  }
+  sending = true; lastSendAt = Date.now();
+  try {
+    const fd = new FormData();
+    fd.append('content', c);
+    fd.append('frm', myNick());
+    const d = await postForm('/api/text', fd);
+    if (d && d.ok) {
+      $('content').value = ''; autoGrow($('content'));
+      poll();
+      toast('已发送');
+    }
+  } finally { sending = false; lastSendAt = Date.now(); }
 }
 $('attachBtn').onclick = () => $('file').click();
 $('file').addEventListener('change', e=>{
@@ -359,11 +365,16 @@ $('file').addEventListener('change', e=>{
 });
 async function uploadFile(){
   if (!pickedFile) return;
+  if (sending || Date.now() - lastSendAt < 600) {   // 防抖: 避免 change 事件重复触发导致双传
+    $('file').value = ''; pickedFile = null;
+    return;
+  }
+  sending = true; lastSendAt = Date.now();
   const fd = new FormData();
   fd.append('file', pickedFile);
   fd.append('frm', myNick());
   const d = await postForm('/api/file', fd);
-  $('file').value = ''; pickedFile = null;
+  $('file').value = ''; pickedFile = null; sending = false; lastSendAt = Date.now();
   if (d && d.ok) { poll(); toast('文件已发送'); }
 }
 /* Enter 发送, Shift+Enter 换行 */
